@@ -4,12 +4,10 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width,initial-scale=1,viewport-fit=cover" name="viewport"/>
 <title>String Art (Mobil Uyumlu)</title>
-<!-- PWA / ikonlar -->
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <meta name="theme-color" content="#000000">
-
 <style>
   :root{
     --bg:#0f1115; --panel:#171a21; --muted:#9aa3b2; --text:#e8eef9; --accent:#5aa9ff;
@@ -33,7 +31,10 @@
     box-shadow:0 6px 24px rgba(0,0,0,.25);
   }
   .canvas-wrap{display:flex; justify-content:center; align-items:center; min-height:60vh}
-  canvas{display:block; width:100%; height:auto; border-radius:12px; background:#000}
+  canvas{
+    display:block; width:100%; height:auto; border-radius:12px; background:#000;
+    touch-action: none; /* FIX: mobilde pan/zoom için gerekli */
+  }
   .controls{display:grid; gap:12px}
   .row{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .row-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px}
@@ -57,7 +58,6 @@
   .meter{height:10px; border-radius:999px; background:#0d1220; border:1px solid #222841; overflow:hidden}
   .meter>i{display:block; height:100%; width:0%; background:linear-gradient(90deg, #4f8cff, #41c285)}
   .tiny{font-size:12px; color:var(--muted)}
-  .stack{display:flex; gap:8px; align-items:center}
   .steps{height:240px; width:100%; border-radius:10px; background:#0f1320; color:#e9efff; border:1px solid #2a3045; padding:10px}
   .hint{color:var(--muted); font-size:12px; margin:8px 0 0}
   .chips{display:flex; gap:8px; flex-wrap:wrap}
@@ -79,7 +79,7 @@
   .modal-content { background: var(--panel); color: var(--text); border: 1px solid #202536; border-radius: 14px; max-width: 900px; width: 100%; max-height: 85vh; overflow: auto; padding: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
   .modal-content h3 { margin-top: 0; }
   .modal-content table { width:100%; border-collapse: collapse; margin: 8px 0 12px; }
-  .modal-content table th, . .modal-content table td { border: 1px solid #2a3045; padding: 8px; font-size: 14px; }
+  .modal-content table th, .modal-content table td { border: 1px solid #2a3045; padding: 8px; font-size: 14px; } /* FIX: hatalı seçici düzeltildi */
   .modal-content pre { background:#0f1320; border:1px solid #2a3045; padding:8px; border-radius:8px; overflow:auto; }
   .modal-content .guide-body { font-size: 14px; line-height: 1.5; }
 </style>
@@ -105,10 +105,9 @@
       <button class="primary" id="helpBtn" style="font-size:12px;padding:6px 8px;">Yardım / Rehber</button>
       <h2 style="cursor:default;">Temel Ayarlar</h2>
       <div>
-        <div class="btns"></div>
         <label for="file">Girdi resmi</label>
         <input accept="image/*" id="file" type="file"/>
-        <div class="hint">Merkezden kırpma ve gri tonlama otomatik uygulanır. (Önizleme: pan/zoom ile konumlandır)</div>
+        <div class="hint">Merkezden kırpma ve gri tonlama otomatik uygulanır. Önizleme pano içinde gösterilir; pan/zoom ile konumlandır.</div>
       </div>
 
       <div class="row">
@@ -144,9 +143,9 @@
       </div>
 
       <div class="btns">
-        <label class="stack" style="gap:6px; align-items:center;">
-          <input id="showPreview" type="checkbox" checked><!-- NEW -->
-          <span class="tiny">Önizleme fotoğrafını göster</span>
+        <label class="tiny" style="display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="showPreview" checked>
+          Önizleme fotoğrafını göster
         </label>
       </div>
 
@@ -176,14 +175,13 @@
           <input id="alpha" max="255" min="5" step="1" type="number" value="80"/>
         </div>
       </div>
-
       <div class="row-3">
         <div>
           <label for="widthPx">Tel kalınlığı (px): <b id="widthPxOut">0.9</b></label>
           <input id="widthPx" max="2.4" min="0.4" step="0.1" type="number" value="0.9"/>
         </div>
         <div>
-          <label for="var">Rastgele bükülme: <b id="varOut">0</b></label><!-- NEW default 0 -->
+          <label for="var">Rastgele bükülme: <b id="varOut">0</b></label>
           <input id="var" max="10" min="0" step="1" type="number" value="0"/>
         </div>
         <div>
@@ -206,33 +204,15 @@
 </main>
 
 <script>
-/** -----------------------------------------------------------
- *  String Art generator — pure Canvas, mobile friendly
- *  Eklentiler (NEW):
- *   - Fotoğrafı pan/zoom ile pano içinde konumlandırma (mouse + touch pinch)
- *   - Oluştur öncesi o konum/ölçek ile yeniden örnekleme ve residual kurma
- *   - Resize sonrası data senkronizasyonu
- *   - 0. çivi üstte
- *   - usedPairs -> cooldown
- *   - Recalc -> resetDrawing
- *   - Çizim sırası ve pin kontrast iyileştirmeleri
- * ----------------------------------------------------------*/
-
 (function(){
   const $ = (sel)=>document.querySelector(sel);
 
-  // Canvas & contexts
   const canvas = $('#art');
   const ctx = canvas.getContext('2d', {alpha: true});
-
-  // --- NEW: Orijinal görüntü nesnesi (önizleme ve yeniden örnekleme için)
-  let origImg = null;
-
-  // Offscreen canvases
-  const srcCanvas = document.createElement('canvas');  // kaynağın (transform uygulanmış) gri versiyonu
+  const srcCanvas = document.createElement('canvas');
   const srcCtx    = srcCanvas.getContext('2d', {willReadFrequently:true});
 
-  // UI elements
+  // UI
   const ui = {
     file: $('#file'), pins: $('#pins'), strings: $('#strings'), minDist: $('#minDist'),
     fade: $('#fade'), alpha: $('#alpha'), widthPx: $('#widthPx'), var: $('#var'), pinSize: $('#pinSize'),
@@ -244,69 +224,66 @@
     quickStats: $('#quickStats'),
   };
 
-  // Parameters (defaults)
-  let SIZE = 700;          // Mantıksal çözünürlük
-  let NR_PINS = 200;
-  let LAST_NR_PINS = -1;
+  // Parametreler (orijinaline sadık)
+  let SIZE = 700;
+  let NR_PINS = 200, LAST_NR_PINS=-1;
   let stringsNumber = 2200;
   let minDist = 15;
   let lineFade = 50;
   let lineAlpha = 80;
   let lineWidth = 0.9;
-  let lineVariation = 0;          // NEW default 0
+  let lineVariation = 0;      // minimal: gerçekçi
   let pinSize = 5;
   let stringColor = '#000000';
   let boardColor = 'white';
 
-  // NEW: Önizleme transform'u (mantıksal SIZE uzayında)
-  const view = { scale: 1, tx: 0, ty: 0 };
-
-  // State / buffers
-  let pins = [];                             // [ {x,y}, ... ]
-  const linesCache = new Map();              // "i-j" -> Int32Array([x0,y0,x1,y1,...])
-  let residual = null;                       // Float32Array (SIZE*SIZE), grayscale mutable
+  // Durumlar
+  let origImg = null;         // NEW: gerçek görüntü
+  const view = { scale:1, tx:0, ty:0 }; // NEW: pan/zoom mantıksal
+  let pins = [];
+  const linesCache = new Map();
+  let residual = null;
   let imgLoaded = false;
-  let steps = [];                            // list of visited pins (0-indexed)
-  let stepsCSV = '';                         // "next,next,next..."
-  let current = 0;                           // current pin index
-  let generating = false;
-  let reqId = null;
+  let steps = [];
+  let stepsCSV = '';
+  let current = 0;
+  let generating=false, reqId=null;
 
-  // NEW: pair cooldown
-  const recentPairs = [];                    // kuyruk
-  let PAIR_COOLDOWN = 100;                   // dinamik ayarlayacağız
-  const usedPairsSet = new Set();            // hızlı lookup için son N çift
+  // Çift cooldown (eski usedPairs yerine)
+  const recentPairs = [];
+  const usedPairsSet = new Set();
+  let PAIR_COOLDOWN = 100;
 
-  // Resize canvas for devicePixelRatio & container width
+  // Araçlar
+  const clamp=(v,lo,hi)=>v<lo?lo:(v>hi?hi:v);
+  function keyPair(a,b){ return a<b ? (a+'-'+b) : (b+'-'+a); }
+  function rand(seed){ let x=(seed|0)+0x9e3779b9; x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; }
+
+  // Boyutlandırma
   function fitCanvas(){
     const wrap = canvas.parentElement;
     const cssSize = Math.min(wrap.clientWidth, 1000);
-    const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
-    canvas.style.width = cssSize + 'px';
-    canvas.style.height = cssSize + 'px';
+    const dpr = Math.max(1, Math.min(window.devicePixelRatio||1, 2));
+    canvas.style.width = cssSize+'px';
+    canvas.style.height= cssSize+'px';
     canvas.width  = Math.floor(cssSize*dpr);
     canvas.height = Math.floor(cssSize*dpr);
     ctx.setTransform(dpr,0,0,dpr,0,0);
 
-    // Mantıksal SIZE: 480..900 arası
-    const newSIZE = Math.min( Math.max(480, Math.round(cssSize)), 900 );
-    const changed = (newSIZE !== SIZE);
+    const newSIZE = Math.min(Math.max(480, Math.round(cssSize)), 900);
+    const changed = (newSIZE!==SIZE);
     SIZE = newSIZE;
 
-    // srcCanvas ve residual mantıksal alana bağlı; görsel yüklüyse yeni SIZE'a yeniden örnekle
-    if (imgLoaded) {
-      rebuildFromOrigImage(); // NEW: transform ile yeniden örnekleme + residual oluştur
+    if(imgLoaded){
+      rebuildFromOrigImage(); // FIX: resize sonrası residual’ı senkronla
     }
-
     precompute(true);
     drawAll();
   }
-  window.addEventListener('resize', ()=>{ fitCanvas(); });
-  fitCanvas();
+  window.addEventListener('resize', fitCanvas);
 
-  // UI wiring
   function bindRange(range, out, assign){
-    const update = ()=>{ out.textContent = range.value; assign(+range.value); if(!generating) drawAll(); };
+    const update=()=>{ out.textContent=range.value; assign(+range.value); if(!generating) drawAll(); };
     range.addEventListener('input', update); update();
   }
   bindRange(ui.pins, ui.pinsOut, v=>{ NR_PINS=v|0; tuneCooldown(); });
@@ -318,87 +295,30 @@
   bindRange(ui.var, ui.varOut, v=>lineVariation=v|0);
   bindRange(ui.pinSize, ui.pinSizeOut, v=>pinSize=v|0);
   ui.color.addEventListener('input', ()=>{ stringColor = ui.color.value; drawAll();});
-  ui.board.addEventListener('change', ()=>{ boardColor = ui.board.value; drawAll(); });
-  ui.showPreview.addEventListener('change', ()=> drawAll());
+  ui.board.addEventListener('change', ()=>{ boardColor = ui.board.value; drawAll();});
+  ui.showPreview.addEventListener('change', drawAll);
 
-  ui.recalc.addEventListener('click', ()=>{ precompute(true); resetDrawing(); drawAll(); }); // NEW resetDrawing
-  ui.generate.addEventListener('click', ()=> startGenerate());
-  ui.step.addEventListener('click', ()=> stepOnce());
-  ui.clear.addEventListener('click', ()=> resetAll());
+  ui.recalc.addEventListener('click', ()=>{ precompute(true); resetDrawing(); drawAll(); }); // FIX: reset de yap
+  ui.generate.addEventListener('click', startGenerate);
+  ui.step.addEventListener('click', stepOnce);
+  ui.clear.addEventListener('click', resetAll);
   ui.stop.addEventListener('click', stopGenerate);
   ui.save.addEventListener('click', savePNG);
   ui.copySteps.addEventListener('click', copySteps);
   ui.downloadSteps.addEventListener('click', downloadCSV);
-
   ui.file.addEventListener('change', onFile);
 
-  function setStatus(s){ ui.status.textContent = s; }
-  function progress(p){ ui.bar.style.width = (100*p).toFixed(1)+'%'; }
+  function setStatus(s){ ui.status.textContent=s; }
+  function progress(p){ ui.bar.style.width=(100*p).toFixed(1)+'%'; }
 
-  // Utility
-  const clamp=(v,lo,hi)=>v<lo?lo:(v>hi?hi:v);
-  function keyPair(a,b){ return a<b ? (a+'-'+b) : (b+'-'+a); }
-  function mod(a,n){ a%=n; return a<0?a+n:a; }
-
-  // tiny RNG
-  function rand(seed){
-    let x = (seed|0) + 0x9e3779b9;
-    x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
-    return (x>>>0) / 4294967296;
-  }
-
-  // --- NEW: cooldown ayarı (pin sayısına göre)
   function tuneCooldown(){
-    PAIR_COOLDOWN = clamp(Math.floor(NR_PINS * 0.5), 40, 200);
-    while (recentPairs.length > PAIR_COOLDOWN) {
-      const old = recentPairs.shift();
-      usedPairsSet.delete(old);
-    }
-  }
-  tuneCooldown();
-
-  // --- NEW: Orijinal görselden srcCanvas + residual inşası (transform uygulanarak)
-  function rebuildFromOrigImage(){
-    const s = SIZE;
-    srcCanvas.width = s; srcCanvas.height = s;
-    srcCtx.save();
-    // pano beyaz/siyah
-    srcCtx.clearRect(0,0,s,s);
-    srcCtx.fillStyle = boardColor==='black' ? '#000' : '#fff';
-    srcCtx.beginPath(); srcCtx.arc(s/2,s/2, (s/2)-6, 0, Math.PI*2); srcCtx.fill();
-    // pano içine clip
-    srcCtx.beginPath(); srcCtx.arc(s/2,s/2, (s/2)-6, 0, Math.PI*2); srcCtx.clip();
-
-    if (origImg){
-      // view.transform (mantıksal uzay): önce translate, sonra scale, sonra görüntüyü 0,0'dan çiziyoruz
-      srcCtx.translate(view.tx, view.ty);
-      srcCtx.scale(view.scale, view.scale);
-
-      // görüntüyü merkeze hizalamak için img'i orta nokta referansı ile çizelim
-      // Basit yaklaşım: görüntünün sol-üst (0,0) mantıksal alanda dursun; kullanıcı pan/zoom ile hizalıyor.
-      srcCtx.drawImage(origImg, 0, 0);
-    }
-    srcCtx.restore();
-
-    // Gri ton ve residual
-    const im = srcCtx.getImageData(0,0,s,s);
-    const px = im.data;
-    for(let i=0;i<px.length;i+=4){
-      const r = px[i], g = px[i+1], b = px[i+2];
-      let y = 0.2126*r + 0.7152*g + 0.0722*b;
-      y = Math.pow(y/255, 1.0/1.05)*255;
-      px[i]=px[i+1]=px[i+2]=y; px[i+3]=255;
-    }
-    srcCtx.putImageData(im,0,0);
-
-    residual = new Float32Array(s*s);
-    const px2 = srcCtx.getImageData(0,0,s,s).data;
-    for(let i=0, j=0;i<px2.length;i+=4, j++){
-      residual[j] = px2[i];
+    PAIR_COOLDOWN = clamp(Math.floor(NR_PINS*0.5), 40, 200);
+    while(recentPairs.length>PAIR_COOLDOWN){
+      const old = recentPairs.shift(); usedPairsSet.delete(old);
     }
   }
 
-  // Görsel dosyası yüklendiğinde
+  // Resim yükleme
   function onFile(e){
     const f = e.target.files && e.target.files[0];
     if(!f) return;
@@ -407,42 +327,76 @@
       origImg = img;
       imgLoaded = true;
 
-      // NEW: başlangıç ölçek/konum — görseli pano çapına sığdır
+      // Görseli pano içine sığdır ve merkezle
       const s = SIZE;
       const diameter = s - 12;
       const scaleX = diameter / img.width;
       const scaleY = diameter / img.height;
-      view.scale = Math.min(scaleX, scaleY); // tamamı görünsün
-      // Görseli pano merkezine koy
-      view.tx = (s - img.width*view.scale)/2;
-      view.ty = (s - img.height*view.scale)/2;
+      view.scale = Math.min(scaleX, scaleY);
+      view.tx = (s - img.width * view.scale) / 2;
+      view.ty = (s - img.height* view.scale) / 2;
 
-      rebuildFromOrigImage();
+      rebuildFromOrigImage(); // residual kurulumu
       precompute(true);
       resetDrawing();
-      drawAll();
+      drawAll(); // FIX: hemen görünür
       setStatus('Resim yüklendi. Pan/zoom ile konumlandır, sonra "Oluştur".');
     };
     img.onerror = ()=> setStatus('Resim yüklenemedi.');
     img.src = URL.createObjectURL(f);
   }
 
-  // (Re)compute pins & (optionally) the lines cache
+  // Orijinalden srcCanvas + residual inşası (pano klibiyle)
+  function rebuildFromOrigImage(){
+    const s = SIZE;
+    srcCanvas.width = s; srcCanvas.height = s;
+    srcCtx.save();
+    srcCtx.clearRect(0,0,s,s);
+
+    // pano zemini
+    srcCtx.fillStyle = boardColor==='black' ? '#000' : '#fff';
+    srcCtx.beginPath(); srcCtx.arc(s/2,s/2,(s/2)-6,0,Math.PI*2); srcCtx.fill();
+    // pano içine clip
+    srcCtx.beginPath(); srcCtx.arc(s/2,s/2,(s/2)-6,0,Math.PI*2); srcCtx.clip();
+
+    if(origImg){
+      srcCtx.translate(view.tx, view.ty);
+      srcCtx.scale(view.scale, view.scale);
+      srcCtx.drawImage(origImg, 0, 0);
+    }
+    srcCtx.restore();
+
+    // gri ton + residual
+    const im = srcCtx.getImageData(0,0,s,s);
+    const px = im.data;
+    for(let i=0;i<px.length;i+=4){
+      const r=px[i], g=px[i+1], b=px[i+2];
+      let y = 0.2126*r + 0.7152*g + 0.0722*b;
+      y = Math.pow(y/255, 1.0/1.05)*255;
+      px[i]=px[i+1]=px[i+2]=y; px[i+3]=255;
+    }
+    srcCtx.putImageData(im,0,0);
+
+    residual = new Float32Array(s*s);
+    const px2 = srcCtx.getImageData(0,0,s,s).data;
+    for(let i=0,j=0;i<px2.length;i+=4,j++){
+      residual[j]=px2[i];
+    }
+  }
+
+  // Pins
   function precompute(force=false){
-    // Pins on circle (0 üstte)  // NEW: -Math.PI/2 kaydırma
     pins = [];
-    const cx = SIZE/2, cy = SIZE/2, R = (SIZE/2)-6;
+    const cx = SIZE/2, cy = SIZE/2, R=(SIZE/2)-6;
     const step = Math.PI*2/NR_PINS;
     for(let i=0;i<NR_PINS;i++){
-      const ang = i*step - Math.PI/2; // üstte başla
+      const ang = i*step - Math.PI/2; // FIX: 0 üstte
       pins.push({x:Math.round(cx + R*Math.cos(ang)), y:Math.round(cy + R*Math.sin(ang))});
     }
-    // Invalidate cache if pin count changed
     if(force || LAST_NR_PINS!==NR_PINS){
       linesCache.clear();
       LAST_NR_PINS = NR_PINS;
     }
-    // Stats
     ui.quickStats.innerHTML = `
       <span class="chip">${NR_PINS} çivi</span>
       <span class="chip">${stringsNumber} ip</span>
@@ -451,447 +405,290 @@
     `;
   }
 
-  // Get or compute Bresenham pixel points for a pair
-  function getLinePixels(ai, bi){
-    const k = keyPair(ai, bi);
-    const cached = linesCache.get(k);
-    if(cached) return cached;
-    const a = pins[ai], b = pins[bi];
+  function getLinePixels(ai,bi){
+    const k = keyPair(ai,bi);
+    const c = linesCache.get(k);
+    if(c) return c;
+    const a=pins[ai], b=pins[bi];
     let x0=a.x, y0=a.y, x1=b.x, y1=b.y;
-    const dx = Math.abs(x1-x0), dy = Math.abs(y1-y0);
-    const sx = x0<x1 ? 1 : -1;
-    const sy = y0<y1 ? 1 : -1;
-    let err = dx - dy;
-    const out = [];
+    const dx = Math.abs(x1-x0), dy=Math.abs(y1-y0);
+    const sx = x0<x1?1:-1, sy=y0<y1?1:-1;
+    let err = dx-dy; const out=[];
     while(true){
-      out.push(x0, y0);
-      if (x0===x1 && y0===y1) break;
+      out.push(x0,y0);
+      if(x0===x1 && y0===y1) break;
       const e2 = err<<1;
-      if (e2 > -dy){ err -= dy; x0 += sx; }
-      if (e2 <  dx){ err += dx; y0 += sy; }
+      if(e2>-dy){ err-=dy; x0+=sx; }
+      if(e2< dx){ err+=dx; y0+=sy; }
     }
-    const arr = Int32Array.from(out);
-    linesCache.set(k, arr);
-    return arr;
+    const arr = Int32Array.from(out); linesCache.set(k,arr); return arr;
   }
 
-  // Score a candidate line: higher if it crosses darker pixels
-  function lineScore(ai, bi){
-    const pts = getLinePixels(ai, bi);
-    const w = SIZE;
-    let s = 0;
-    // performans: her 2. pikseli örnekle
-    for(let i=0;i<pts.length;i+=4){
-      const x = pts[i], y = pts[i+1];
-      const xi = clamp(x,0,w-1), yi = clamp(y,0,w-1);
-      const idx = yi*w + xi;
-      s += (255 - residual[idx]);
+  function lineScore(ai,bi){
+    const pts = getLinePixels(ai,bi);
+    const w = SIZE; let s=0;
+    for(let i=0;i<pts.length;i+=4){ // performans: her 2. nokta
+      const x=clamp(pts[i],0,w-1), y=clamp(pts[i+1],0,w-1);
+      s += (255 - residual[y*w + x]);
     }
-    // normalize
     const samples = Math.ceil((pts.length/2)/2);
-    return s / Math.max(1, samples);
+    return s / Math.max(1,samples);
   }
 
-  // After drawing a string, lighten the residual along the path
-  function reduceLine(ai, bi){
-    const pts = getLinePixels(ai, bi);
-    const w = SIZE;
+  function reduceLine(ai,bi){
+    const pts=getLinePixels(ai,bi); const w=SIZE;
     for(let i=0;i<pts.length;i+=2){
-      const x = pts[i], y = pts[i+1];
-      const xi = clamp(x,0,w-1), yi = clamp(y,0,w-1);
-      const idx = yi*w + xi;
-      residual[idx] = Math.min(255, residual[idx] + lineFade);
+      const x=clamp(pts[i],0,w-1), y=clamp(pts[i+1],0,w-1);
+      const idx=y*w+x; residual[idx]=Math.min(255, residual[idx]+lineFade);
     }
   }
 
-  // Choose the next pin (with cooldown)
   function nextPin(curr){
     let best=-1, bestScore=0;
     for(let i=0;i<NR_PINS;i++){
       if(i===curr) continue;
-      // wrap-around distance on ring
-      const d = Math.abs(i-curr);
-      const minWrap = Math.min(d, NR_PINS-d);
-      if(minWrap < minDist) continue;
-      const k = keyPair(curr,i);
-      if(usedPairsSet.has(k)) continue; // cooldown
-      const s = lineScore(curr,i);
-      if(s > bestScore){ bestScore = s; best = i; }
+      const d=Math.abs(i-curr); const minWrap=Math.min(d, NR_PINS-d);
+      if(minWrap<minDist) continue;
+      const k=keyPair(curr,i);
+      if(usedPairsSet.has(k)) continue;
+      const sc=lineScore(curr,i);
+      if(sc>bestScore){ bestScore=sc; best=i; }
     }
     return best;
   }
 
-  // Draw helpers -------------------------------------------------------------
+  // Çizimler
   function clearCanvas(){
-    // Board / frame
     ctx.save();
     ctx.clearRect(0,0,canvas.width,canvas.height);
-
-    // Ekran ölçeği: mantıksal -> css px
-    const s = canvas.clientWidth;
-    const scale = s / SIZE;
-
-    const cx = s/2, cy = s/2;
-    const rOuter = (s/2) - 8;
+    const s=canvas.clientWidth, cx=s/2, cy=s/2, r=(s/2)-8;
     ctx.fillStyle = boardColor==='black' ? '#000' : '#fff';
-    ctx.beginPath(); ctx.arc(cx,cy, rOuter, 0, Math.PI*2); ctx.fill();
-
-    // çerçeve halkası
-    ctx.lineWidth = 10;
-    ctx.strokeStyle = boardColor==='black' ? '#cfd6e6' : '#222';
-    ctx.beginPath(); ctx.arc(cx,cy, rOuter-1, 0, Math.PI*2); ctx.stroke();
-
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+    ctx.lineWidth=10; ctx.strokeStyle = boardColor==='black' ? '#cfd6e6' : '#222';
+    ctx.beginPath(); ctx.arc(cx,cy,r-1,0,Math.PI*2); ctx.stroke();
     ctx.restore();
   }
 
-  // NEW: Önizleme fotoğrafını pano içinde çiz
   function drawPreviewImage(){
     if(!imgLoaded || !ui.showPreview.checked || !origImg) return;
-    const s = canvas.clientWidth;
+    const s=canvas.clientWidth, cx=s/2, cy=s/2, r=(s/2)-8;
     const scaleCanvas = s / SIZE;
-
     ctx.save();
-    // pano içine clip
-    const cx = s/2, cy = s/2, rOuter = (s/2) - 8;
-    ctx.beginPath(); ctx.arc(cx,cy, rOuter, 0, Math.PI*2); ctx.clip();
-
-    // view transform (mantıksal → ekran)
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.clip();
     ctx.translate(view.tx*scaleCanvas, view.ty*scaleCanvas);
     ctx.scale(view.scale*scaleCanvas, view.scale*scaleCanvas);
-
     ctx.drawImage(origImg, 0, 0);
     ctx.restore();
   }
 
   function drawPins(){
-    const s = canvas.clientWidth;
-    const scale = s / SIZE;
+    const s=canvas.clientWidth, scale=s/SIZE;
     ctx.save();
-    // Kontrastlı pin rengi
     ctx.fillStyle = (boardColor==='black') ? '#e9e9e9' : '#202536';
     for(const p of pins){
-      ctx.beginPath();
-      ctx.arc(p.x*scale, p.y*scale, pinSize*scale, 0, Math.PI*2);
-      ctx.fill();
+      ctx.beginPath(); ctx.arc(p.x*scale, p.y*scale, pinSize*scale, 0, Math.PI*2); ctx.fill();
     }
     ctx.restore();
+  }
+
+  function drawOneCurve(ai,bi,idx,scale){
+    const a=pins[ai], b=pins[bi];
+    const ax=a.x*scale, ay=a.y*scale, bx=b.x*scale, by=b.y*scale;
+    if(lineVariation<=0){ ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke(); return; }
+    const midx=(ax+bx)/2, midy=(ay+by)/2;
+    const seed=(ai*73856093)^(bi*19349663)^(idx*83492791);
+    const jit=lineVariation*scale;
+    const jx=(rand(seed)-.5)*2*jit, jy=(rand(seed+1)-.5)*2*jit;
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.bezierCurveTo(midx+jx, midy+jy, midx+jx, midy+jy, bx,by); ctx.stroke();
   }
 
   function drawStringsFromSteps(){
-    const s = canvas.clientWidth, scale=s/SIZE;
+    if(steps.length<2) return;
+    const s=canvas.clientWidth, scale=s/SIZE;
     ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    const a = hexToRGBA(stringColor, lineAlpha/255);
-    ctx.strokeStyle = a;
-    ctx.lineWidth = lineWidth * scale;
-    for(let i=0;i<steps.length-1;i++){
-      drawOneCurve(steps[i], steps[i+1], i, scale);
-    }
+    ctx.lineCap='round'; ctx.lineJoin='round';
+    ctx.strokeStyle = hexToRGBA(stringColor, lineAlpha/255);
+    ctx.lineWidth = lineWidth*scale;
+    for(let i=0;i<steps.length-1;i++) drawOneCurve(steps[i], steps[i+1], i, scale);
     ctx.restore();
-  }
-
-  function drawOneCurve(ai, bi, idx, scale){
-    const a = pins[ai], b = pins[bi];
-    const ax = a.x*scale, ay = a.y*scale;
-    const bx = b.x*scale, by = b.y*scale;
-    if(lineVariation<=0){
-      ctx.beginPath();
-      ctx.moveTo(ax,ay); ctx.lineTo(bx,by); ctx.stroke();
-      return;
-    }
-    const midx = (ax+bx)/2, midy=(ay+by)/2;
-    const seed = (ai*73856093) ^ (bi*19349663) ^ (idx*83492791);
-    const jitter = lineVariation * scale;
-    const jx = (rand(seed)-0.5)*2*jitter;
-    const jy = (rand(seed+1)-0.5)*2*jitter;
-
-    ctx.beginPath();
-    ctx.moveTo(ax,ay);
-    ctx.bezierCurveTo(midx+jx, midy+jy, midx+jx, midy+jy, bx,by);
-    ctx.stroke();
   }
 
   function drawAll(){
     clearCanvas();
-    drawPreviewImage();      // NEW: pano içine foto
-    if(steps.length>1) drawStringsFromSteps();
-    if(pins.length) drawPins(); // en son pinler
+    drawPreviewImage();   // NEW: önce pano içine görüntü
+    drawStringsFromSteps();
+    drawPins();           // en son pinler
   }
 
-  function hexToRGBA(hex, a){
-    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-    if(!m) return `rgba(255,255,255,${a})`;
-    const i = parseInt(m[1],16);
-    const r = (i>>16)&255, g=(i>>8)&255, b=i&255;
+  function hexToRGBA(hex,a){
+    const m=/^#?([0-9a-f]{6})$/i.exec(hex.trim()); if(!m) return `rgba(255,255,255,${a})`;
+    const i=parseInt(m[1],16); const r=(i>>16)&255, g=(i>>8)&255, b=i&255;
     return `rgba(${r},${g},${b},${a})`;
   }
 
-  // Workflow controls --------------------------------------------------------
+  // Akış
   function resetDrawing(){
-    recentPairs.length = 0;
-    usedPairsSet.clear();
-    steps = [];
-    stepsCSV = '';
-    current = 0;
+    recentPairs.length=0; usedPairsSet.clear();
+    steps=[]; stepsCSV=''; current=0;
     if(NR_PINS>0) steps.push(current);
-    progress(0);
-    setStatus('Hazır.');
-    ui.stepsBox.value = '';
+    progress(0); setStatus('Hazır.'); ui.stepsBox.value='';
     drawAll();
   }
 
   function resetAll(){
-    if(imgLoaded){
-      rebuildFromOrigImage(); // NEW
-    }
-    precompute(true);
-    resetDrawing();
+    if(imgLoaded) rebuildFromOrigImage();
+    precompute(true); resetDrawing();
   }
 
-  async function startGenerate(){
+  function startGenerate(){
     if(!imgLoaded){ setStatus('Önce bir resim yükleyin'); return; }
     if(generating) return;
-    // Oluştur'a basıldığında: şu anki view ile srcCanvas/residual'ı tazele
-    rebuildFromOrigImage(); // NEW kritik
-    precompute(); // ensure pins exist
-    generating = true;
-    ui.generate.disabled = true;
-    ui.step.disabled = true;
-    ui.stop.disabled = false;
-    setStatus('Oluşturuluyor…');
-    runGeneratorLoop();
+    rebuildFromOrigImage(); // FIX: o anki konum/ölçekle residual’ı kur
+    precompute();
+    generating=true; ui.generate.disabled=true; ui.step.disabled=true; ui.stop.disabled=false;
+    setStatus('Oluşturuluyor…'); runGeneratorLoop();
   }
 
   function stopGenerate(){
-    generating = false;
-    ui.generate.disabled = false;
-    ui.step.disabled = false;
-    ui.stop.disabled = true;
-    setStatus('Durduruldu.');
-    if(reqId!==null){ cancelAnimationFrame(reqId); reqId=null; }
+    generating=false; ui.generate.disabled=false; ui.step.disabled=false; ui.stop.disabled=true;
+    setStatus('Durduruldu.'); if(reqId!==null){ cancelAnimationFrame(reqId); reqId=null; }
   }
 
   function runGeneratorLoop(){
-    const batch = 20;
-    const tick = ()=>{
+    const batch=20;
+    const tick=()=>{
       if(!generating) return;
       for(let k=0;k<batch;k++){
-        if(steps.length>=stringsNumber) { stopGenerate(); setStatus('Tamamlandı.'); break; }
-        const next = nextPin(current);
+        if(steps.length>=stringsNumber){ stopGenerate(); setStatus('Tamamlandı.'); break; }
+        const next=nextPin(current);
         if(next<0){ stopGenerate(); setStatus('Geçerli çizgi kalmadı (kısıtlara takıldı).'); break; }
         commitStep(next);
       }
-      drawAll();
-      progress(steps.length/stringsNumber);
-      if(generating) reqId = requestAnimationFrame(tick);
+      drawAll(); progress(steps.length/stringsNumber);
+      if(generating) reqId=requestAnimationFrame(tick);
     };
-    reqId = requestAnimationFrame(tick);
+    reqId=requestAnimationFrame(tick);
   }
 
   function stepOnce(){
     if(!imgLoaded){ setStatus('Önce bir resim yükleyin'); return; }
     precompute();
-    const next = nextPin(current);
+    const next=nextPin(current);
     if(next<0){ setStatus('Geçerli çizgi kalmadı.'); return; }
-    commitStep(next);
-    drawAll();
-    progress(steps.length/stringsNumber);
+    commitStep(next); drawAll(); progress(steps.length/stringsNumber);
   }
 
   function pushCooldownPair(k){
-    recentPairs.push(k);
-    usedPairsSet.add(k);
-    if(recentPairs.length > PAIR_COOLDOWN){
-      const old = recentPairs.shift();
-      usedPairsSet.delete(old);
+    recentPairs.push(k); usedPairsSet.add(k);
+    if(recentPairs.length>PAIR_COOLDOWN){
+      const old=recentPairs.shift(); usedPairsSet.delete(old);
     }
   }
 
   function commitStep(next){
-    // pair cooldown
-    pushCooldownPair( keyPair(current, next) );
-    // model
-    reduceLine(current, next);
+    pushCooldownPair(keyPair(current,next));
+    reduceLine(current,next);
     steps.push(next);
-    stepsCSV += (stepsCSV ? ',' : '') + next;
-    ui.stepsBox.value = stepsCSV;
-    current = next;
+    stepsCSV += (stepsCSV?',':'') + next;
+    ui.stepsBox.value=stepsCSV;
+    current=next;
     setStatus(`Adım ${steps.length-1}/${stringsNumber}`);
   }
 
-  // Export helpers
   function savePNG(){
-    const a = document.createElement('a');
-    a.href = canvas.toDataURL('image/png');
-    a.download = `string-art_${NR_PINS}pins_${steps.length-1}strings.png`;
+    const a=document.createElement('a');
+    a.href=canvas.toDataURL('image/png');
+    a.download=`string-art_${NR_PINS}pins_${steps.length-1}strings.png`;
     a.click();
   }
 
   async function copySteps(){
-    try{
-      await navigator.clipboard.writeText(stepsCSV);
-      setStatus('Adımlar panoya kopyalandı.');
-    }catch(e){
-      setStatus('Kopyalama başarısız. Manuel olarak seçip kopyalayabilirsiniz.');
-    }
+    try{ await navigator.clipboard.writeText(stepsCSV); setStatus('Adımlar panoya kopyalandı.'); }
+    catch(e){ setStatus('Kopyalama başarısız. Manuel olarak seçip kopyalayabilirsiniz.'); }
   }
 
   function downloadCSV(){
-    const blob = new Blob([stepsCSV+'\n'], {type:'text/csv'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `string-art-steps_${NR_PINS}pins_${steps.length-1}strings.csv`;
+    const blob=new Blob([stepsCSV+'\n'],{type:'text/csv'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url;
+    a.download=`string-art-steps_${NR_PINS}pins_${steps.length-1}strings.csv`;
     a.click(); URL.revokeObjectURL(url);
   }
 
-  // PAN / ZOOM (mouse + touch)  ------------------------------------------ NEW
-  const state = {
-    dragging:false, lastX:0, lastY:0,
-    // pinch
-    pointers: new Map(),
-    lastPinchDist: 0,
-    lastMid: {x:0,y:0},
-  };
+  // Pan/Zoom — pointer + wheel
+  const state={pointers:new Map(), dragging:false, lastX:0, lastY:0, lastPinchDist:0, lastMid:{x:0,y:0}};
+  function canvasToLogical(x,y){ const s=canvas.clientWidth; const sc=s/SIZE; return {x:x/sc, y:y/sc}; }
+  function getMidAndDist(p1,p2){ const dx=p2.x-p1.x, dy=p2.y-p1.y; return {mid:{x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2}, dist:Math.hypot(dx,dy)}; }
 
-  function canvasToLogical(x, y){
-    const s = canvas.clientWidth;
-    const scaleCanvas = s / SIZE;
-    return { x: x/scaleCanvas, y: y/scaleCanvas };
-  }
-
-  function getMidAndDist(p1, p2){
-    const dx = p2.x - p1.x, dy = p2.y - p1.y;
-    return { mid:{x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2}, dist: Math.hypot(dx,dy) };
-  }
-
-  // Mouse wheel zoom
   canvas.addEventListener('wheel', (ev)=>{
     if(!imgLoaded) return;
     ev.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const mx = ev.clientX - rect.left;
-    const my = ev.clientY - rect.top;
-    const {x:lx,y:ly} = canvasToLogical(mx,my);
-
-    const zoom = Math.pow(1.0015, -ev.deltaY);
-    const newScale = clamp(view.scale * zoom, 0.2, 8);
-
-    // odak noktası sabit kalsın:
-    // (lx - tx) * newScale = (lx - tx_new) * oldScale  → tx_new = lx - (oldScale/newScale)*(lx - tx)
-    const oldScale = view.scale;
-    view.tx = lx - (oldScale/newScale)*(lx - view.tx);
-    view.ty = ly - (oldScale/newScale)*(ly - view.ty);
-    view.scale = newScale;
-
+    const rect=canvas.getBoundingClientRect();
+    const {x:lx,y:ly}=canvasToLogical(ev.clientX-rect.left, ev.clientY-rect.top);
+    const zoom=Math.pow(1.0015, -ev.deltaY);
+    const old=view.scale, neu=clamp(old*zoom, 0.2, 8);
+    view.tx = lx - (old/neu)*(lx - view.tx);
+    view.ty = ly - (old/neu)*(ly - view.ty);
+    view.scale = neu;
     drawAll();
   }, {passive:false});
 
-  // Pointer events
   canvas.addEventListener('pointerdown', (e)=>{
     if(!imgLoaded) return;
     canvas.setPointerCapture(e.pointerId);
     state.pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-    if(state.pointers.size===1){
-      state.dragging = true;
-      state.lastX = e.clientX;
-      state.lastY = e.clientY;
-    }else if(state.pointers.size===2){
-      // pinch start
-      const [a,b] = [...state.pointers.values()];
-      const rect = canvas.getBoundingClientRect();
-      const p1 = canvasToLogical(a.x-rect.left, a.y-rect.top);
-      const p2 = canvasToLogical(b.x-rect.left, b.y-rect.top);
-      const r = getMidAndDist(p1,p2);
-      state.lastPinchDist = r.dist;
-      state.lastMid = r.mid;
+    if(state.pointers.size===1){ state.dragging=true; state.lastX=e.clientX; state.lastY=e.clientY; }
+    else if(state.pointers.size===2){
+      const [a,b]=[...state.pointers.values()];
+      const rect=canvas.getBoundingClientRect();
+      const p1=canvasToLogical(a.x-rect.left,a.y-rect.top), p2=canvasToLogical(b.x-rect.left,b.y-rect.top);
+      const r=getMidAndDist(p1,p2); state.lastPinchDist=r.dist; state.lastMid=r.mid;
     }
   });
 
   canvas.addEventListener('pointermove', (e)=>{
-    if(!imgLoaded) return;
-    if(!state.pointers.has(e.pointerId)) return;
-    const prev = state.pointers.get(e.pointerId);
+    if(!imgLoaded || !state.pointers.has(e.pointerId)) return;
     state.pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-
     if(state.pointers.size===1 && state.dragging){
-      const dx = e.clientX - state.lastX;
-      const dy = e.clientY - state.lastY;
-      state.lastX = e.clientX;
-      state.lastY = e.clientY;
-      // pan: ekran px -> mantıksal
-      const s = canvas.clientWidth;
-      const scaleCanvas = s / SIZE;
-      view.tx += dx/scaleCanvas;
-      view.ty += dy/scaleCanvas;
-      drawAll();
-    } else if(state.pointers.size===2){
-      // pinch
-      const [pa,pb] = [...state.pointers.values()];
-      const rect = canvas.getBoundingClientRect();
-      const p1 = canvasToLogical(pa.x-rect.left, pa.y-rect.top);
-      const p2 = canvasToLogical(pb.x-rect.left, pb.y-rect.top);
-      const r = getMidAndDist(p1,p2);
-
+      const dx=e.clientX-state.lastX, dy=e.clientY-state.lastY;
+      state.lastX=e.clientX; state.lastY=e.clientY;
+      const s=canvas.clientWidth, sc=s/SIZE; view.tx+=dx/sc; view.ty+=dy/sc; drawAll();
+    }else if(state.pointers.size===2){
+      const [pa,pb]=[...state.pointers.values()];
+      const rect=canvas.getBoundingClientRect();
+      const p1=canvasToLogical(pa.x-rect.left, pa.y-rect.top);
+      const p2=canvasToLogical(pb.x-rect.left, pb.y-rect.top);
+      const r=getMidAndDist(p1,p2);
       if(state.lastPinchDist>0){
-        const factor = clamp(r.dist / state.lastPinchDist, 0.5, 2.0);
-        const oldScale = view.scale;
-        const newScale = clamp(oldScale * factor, 0.2, 8);
-        // orta noktayı referans alarak ölçekle
-        view.tx = r.mid.x - (oldScale/newScale)*(r.mid.x - view.tx);
-        view.ty = r.mid.y - (oldScale/newScale)*(r.mid.y - view.ty);
-        view.scale = newScale;
+        const factor=clamp(r.dist/state.lastPinchDist, 0.5, 2.0);
+        const old=view.scale, neu=clamp(old*factor, 0.2, 8);
+        view.tx = r.mid.x - (old/neu)*(r.mid.x - view.tx);
+        view.ty = r.mid.y - (old/neu)*(r.mid.y - view.ty);
+        view.scale = neu;
       }
-      state.lastPinchDist = r.dist;
-      state.lastMid = r.mid;
-      drawAll();
+      state.lastPinchDist=r.dist; state.lastMid=r.mid; drawAll();
     }
   });
 
   function endPointer(e){
-    if(state.pointers.has(e.pointerId)){
-      state.pointers.delete(e.pointerId);
-    }
-    if(state.pointers.size===0){
-      state.dragging=false;
-      state.lastPinchDist=0;
-    }
+    if(state.pointers.has(e.pointerId)) state.pointers.delete(e.pointerId);
+    if(state.pointers.size===0){ state.dragging=false; state.lastPinchDist=0; }
   }
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
   canvas.addEventListener('pointerleave', endPointer);
 
-  // Initial blank setup
-  precompute(true);
-  resetDrawing();
-  stringColor = ui.color.value || '#000000';
-  boardColor = ui.board.value || 'white';
-  drawAll();
-
+  // Başlangıç
+  function init(){
+    fitCanvas();
+    stringColor = ui.color.value||'#000000';
+    boardColor  = ui.board.value||'white';
+    precompute(true);
+    resetDrawing();
+    drawAll();
+  }
+  init();
 })();
-
-// Collapsible advanced settings
-document.addEventListener("DOMContentLoaded", function(){
-  document.querySelectorAll('.panel-section h2').forEach(function(h2){
-    h2.addEventListener('click', function(){
-      const section = h2.parentElement;
-      section.classList.toggle('collapsed');
-    });
-  });
-});
-
-// Yardım modal aç/kapat
-document.addEventListener('DOMContentLoaded', function(){
-  var helpBtn = document.getElementById('helpBtn');
-  var helpModal = document.getElementById('helpModal');
-  var helpClose = document.getElementById('helpClose');
-  function openHelp(){ helpModal.style.display = 'flex'; }
-  function closeHelp(){ helpModal.style.display = 'none'; }
-  if(helpBtn){ helpBtn.addEventListener('click', openHelp); }
-  if(helpClose){ helpClose.addEventListener('click', closeHelp); }
-  if(helpModal){ helpModal.addEventListener('click', function(e){ if(e.target===helpModal) closeHelp(); }); }
-  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeHelp(); });
-});
 </script>
 
 <!-- Yardım Modal -->
@@ -941,5 +738,30 @@ document.addEventListener('DOMContentLoaded', function(){
     <button aria-label="Kapat" class="danger" id="helpClose">Kapat</button>
   </div>
 </div>
+
+<script>
+// Modal aç/kapat (orijinal davranış korunur)
+document.addEventListener('DOMContentLoaded', function(){
+  var helpBtn = document.getElementById('helpBtn');
+  var helpModal = document.getElementById('helpModal');
+  var helpClose = document.getElementById('helpClose');
+  function openHelp(){ helpModal.style.display = 'flex'; }
+  function closeHelp(){ helpModal.style.display = 'none'; }
+  if(helpBtn){ helpBtn.addEventListener('click', openHelp); }
+  if(helpClose){ helpClose.addEventListener('click', closeHelp); }
+  if(helpModal){ helpModal.addEventListener('click', function(e){ if(e.target===helpModal) closeHelp(); }); }
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeHelp(); });
+});
+
+// Gelişmiş ayarlar collapse (orijinal davranış)
+document.addEventListener("DOMContentLoaded", function(){
+  document.querySelectorAll('.panel-section h2').forEach(function(h2){
+    h2.addEventListener('click', function(){
+      const section = h2.parentElement;
+      section.classList.toggle('collapsed');
+    });
+  });
+});
+</script>
 </body>
 </html>
