@@ -82,6 +82,27 @@
   .modal-content table th, .modal-content table td { border: 1px solid #2a3045; padding: 8px; font-size: 14px; } /* FIX: hatalı seçici düzeltildi */
   .modal-content pre { background:#0f1320; border:1px solid #2a3045; padding:8px; border-radius:8px; overflow:auto; }
   .modal-content .guide-body { font-size: 14px; line-height: 1.5; }
+  /* === MOBİLDE "Önizleme fotoğrafını göster" kutusunu büyüt === */
+/* Sadece mobilde büyütmek istersen bu medya sorgusu ideal */
+@media (max-width: 780px) {
+  /* Kutucuğun kendisini büyüt (tüm tarayıcılarda çalışması için scale kullanıyoruz) */
+  #showPreview{
+    display: inline-block;           /* ölçeklemede hizalamayı sabitle */
+    transform: scale(1.8);           /* kutunun gerçek boyutunu büyüt */
+    transform-origin: left center;   /* sola yapışık büyüsün */
+    margin-right: 10px;              /* metinden uzaklaşsın */
+    accent-color: var(--accent);     /* tik rengi markanın aksenti olsun (destekleyen tarayıcılarda) */
+  }
+
+  /* Etiketin dokunma alanını büyüt → daha kolay tıklanır */
+  label.tiny{
+    padding: 10px 12px !important;   /* inline stil olsa bile baskın olsun diye */
+    border-radius: 10px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
 </style>
 </head>
 <body>
